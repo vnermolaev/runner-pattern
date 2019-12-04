@@ -1,15 +1,16 @@
 use futures::prelude::*;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::prelude::*;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::time;
 
 struct Blackhole {}
 
 impl Blackhole {
     fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
-        let mut runner = BlackholeRunner::new(rx, tx);
+        let runner = BlackholeRunner::new(rx, tx);
 
         tokio::spawn(async move {
             if let Err(err) = runner.entry().await {
@@ -21,8 +22,10 @@ impl Blackhole {
     }
 }
 
+type Deque = Arc<Mutex<VecDeque<String>>>;
+
 struct BlackholeRunner {
-    objects: VecDeque<String>,
+    objects: Deque,
 
     source: mpsc::UnboundedReceiver<String>,
     emitter: mpsc::UnboundedSender<String>,
@@ -31,32 +34,46 @@ struct BlackholeRunner {
 impl BlackholeRunner {
     fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
         BlackholeRunner {
-            objects: VecDeque::new(),
+            objects: Arc::new(Mutex::new(VecDeque::new())),
             source: rx,
             emitter: tx,
         }
     }
 
-    fn entry(&mut self) -> impl Future<Output = Result<(), failure::Error>> + '_ {
-        let consumer = self.consume();
-        let emitter = self.emit();
+    fn entry(self) -> impl Future<Output = Result<(), failure::Error>> {
+        let Self {
+            objects,
+            source,
+            emitter,
+        } = self;
+        let consumer = BlackholeRunner::consume(source, objects.clone());
+        let emitter = BlackholeRunner::emit(emitter, objects.clone());
 
         future::join(consumer, emitter).map(|_| Ok(()))
+        //        emitter
     }
 
-    async fn consume(&mut self) {
-        while let Some(object) = self.source.next().await {
-            self.objects.push_back(object);
+    async fn consume(mut source: mpsc::UnboundedReceiver<String>, objects: Deque) {
+        while let Some(object) = source.next().await {
+            println!("Consumed {}", object);
+            objects.lock().await.push_back(object);
         }
     }
 
-    async fn emit(&mut self) -> Result<(), failure::Error> {
+    async fn emit(
+        emitter: mpsc::UnboundedSender<String>,
+        objects: Deque,
+    ) -> Result<(), failure::Error> {
         loop {
             time::delay_for(Duration::from_secs(2)).await;
-            if let Some(object) = self.objects.pop_front() {
-                let _ = self.emitter.send(object);
+            if let Some(object) = objects.lock().await.pop_front() {
+                let _ = emitter.send(object);
+            } else {
+                break;
             }
         }
+
+        Ok(())
     }
 }
 
@@ -74,11 +91,9 @@ async fn main() -> Result<(), failure::Error> {
         }
     });
 
-    tokio::spawn(async move {
-        while let Some(object) = emission.next().await {
-            println!("Emitted: {}", object);
-        }
-    });
+    while let Some(object) = emission.next().await {
+        println!("Emitted: {}", object);
+    }
 
     Ok(())
 }
