@@ -50,7 +50,6 @@ impl BlackholeRunner {
         let emitter = BlackholeRunner::emit(emitter, objects.clone());
 
         future::join(consumer, emitter).map(|_| Ok(()))
-        //        emitter
     }
 
     async fn consume(mut source: mpsc::UnboundedReceiver<String>, objects: Deque) {
