@@ -17,11 +17,7 @@ impl Blackhole {
             emitter: tx,
         };
 
-        tokio::spawn(async move {
-            if let Err(err) = runner.entry().await {
-                println!("Error: {:?}", err);
-            }
-        });
+        tokio::spawn(runner.entry());
 
         Blackhole {}
     }
@@ -35,7 +31,11 @@ struct BlackholeRunner {
 }
 
 impl BlackholeRunner {
-    async fn entry(self) -> Result<(), failure::Error> {
+    async fn entry(mut self)  {
+        self.routine().await.ok();
+    }
+
+    async fn routine(&mut self) -> Result<(), failure::Error> {
         loop {
             futures::select! {
                 a = self.consume().fuse() => println!("{}", a),
@@ -46,12 +46,12 @@ impl BlackholeRunner {
         Ok(())
     }
 
-    async fn consume(&mut self) -> u32 {
+    async fn consume(&self) -> u32 {
         time::delay_for(Duration::from_secs(1)).await;
         1
     }
 
-    async fn emit(&mut self) -> u32 {
+    async fn emit(&self) -> u32 {
         time::delay_for(Duration::from_secs(2)).await;
         2
     }
