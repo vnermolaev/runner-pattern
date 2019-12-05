@@ -1,16 +1,13 @@
-use failure::_core::hash::Hasher;
 use futures::prelude::*;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::VecDeque;
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-use tokio::time;
+use tokio::time::{delay_for, interval_at, Duration, Instant};
 
 struct Blackhole {}
 
 impl Blackhole {
     fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
-        let mut runner = BlackholeRunner::new(rx, tx);
+        let runner = BlackholeRunner::new(rx, tx);
 
         tokio::spawn(runner.entry());
 
@@ -26,10 +23,6 @@ struct BlackholeRunner {
 }
 
 impl BlackholeRunner {
-    async fn entry(mut self) {
-        self.routine().await.ok();
-    }
-
     fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
         BlackholeRunner {
             objects: VecDeque::new(),
@@ -38,28 +31,40 @@ impl BlackholeRunner {
         }
     }
 
+    async fn entry(mut self) {
+        self.routine().await.ok();
+    }
+
     async fn routine(&mut self) -> Result<(), failure::Error> {
-        let start = time::Instant::now() + time::Duration::from_secs(2);
-        let mut interval = time::interval_at(start, time::Duration::from_secs(2));
+        let start = Instant::now() + Duration::from_secs(2);
+        let mut interval = interval_at(start, Duration::from_secs(2));
         loop {
             futures::select! {
                 tick = interval.tick().fuse() => {
-                    if let Some(object) = self.objects.pop_front() {
-                        let _ = self.emitter.send(object);
-                    } else {
-                        break;
-                    }
+                    if !self.emit() { break; }
                 },
                 object = self.source.next().fuse() => {
                     if let Some(object) = object {
-                        println!("Consuming {:?}", object);
-                        self.objects.push_back(object);
+                        self.consume(object);
                     }
                 },
             }
         }
 
         Ok(())
+    }
+
+    fn emit(&mut self) -> bool {
+        if let Some(object) = self.objects.pop_front() {
+            let _ = self.emitter.send(object);
+            return true;
+        }
+        false
+    }
+
+    fn consume(&mut self, object: String) {
+        println!("Consuming: {}", object);
+        self.objects.push_back(object);
     }
 }
 
@@ -72,7 +77,7 @@ async fn main() -> Result<(), failure::Error> {
 
     tokio::spawn(async move {
         for i in 0..10u8 {
-            time::delay_for(time::Duration::from_secs(1)).await;
+            delay_for(Duration::from_secs(1)).await;
             let _ = tx.send(format!("Body {}", i));
         }
     });
