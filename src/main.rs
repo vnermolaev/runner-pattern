@@ -11,11 +11,7 @@ struct Blackhole {}
 
 impl Blackhole {
     fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
-        let runner = BlackholeRunner {
-            objects: HashMap::new(),
-            source: rx,
-            emitter: tx,
-        };
+        let mut runner = BlackholeRunner::new(rx, tx);
 
         tokio::spawn(runner.entry());
 
@@ -24,37 +20,71 @@ impl Blackhole {
 }
 
 struct BlackholeRunner {
-    objects: HashMap<String, String>,
+    objects: VecDeque<String>,
 
     source: mpsc::UnboundedReceiver<String>,
     emitter: mpsc::UnboundedSender<String>,
 }
 
 impl BlackholeRunner {
-    async fn entry(mut self)  {
+    async fn entry(mut self) {
         self.routine().await.ok();
+    }
+
+    fn new(rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<String>) -> Self {
+        BlackholeRunner {
+            objects: VecDeque::new(),
+            source: rx,
+            emitter: tx,
+        }
     }
 
     async fn routine(&mut self) -> Result<(), failure::Error> {
         loop {
+            let delay = time::delay_for(Duration::from_secs(2));
+
             futures::select! {
-                a = self.consume().fuse() => println!("{}", a),
-                b = self.emit().fuse() => println!("{}", b),
+                tick = delay.fuse() => {
+                    if let Some(object) = self.objects.pop_front() {
+                        println!("Popping {:?}", object);
+                        let _ = self.emitter.send(object);
+                    } else {
+                        break;
+                    }
+                },
+                object = self.source.next().fuse() => {
+                    if let Some(object) = object {
+                        println!("Consuming {:?}", object);
+                        self.objects.push_back(object);
+                    }
+                },
             }
         }
 
         Ok(())
     }
 
-    async fn consume(&self) -> u32 {
-        time::delay_for(Duration::from_secs(1)).await;
-        1
-    }
+    //    async fn consume(&self) -> u32 {
+    //        time::delay_for(Duration::from_secs(1)).await;
+    //        1
+    //    }
+    //
+    //    async fn emit(&self) -> u32 {
+    //        time::delay_for(Duration::from_secs(2)).await;
+    //        2
+    //    }
 
-    async fn emit(&self) -> u32 {
-        time::delay_for(Duration::from_secs(2)).await;
-        2
-    }
+    //    async fn consume(&mut self) -> u32 {
+    //        //        time::delay_for(Duration::from_secs(1)).await;
+    //        //        1
+    //        let v = self.source.next().await;
+    //        1
+    //    }
+    //
+    //    async fn emit(&self) -> u32 {
+    //        time::delay_for(Duration::from_secs(2)).await;
+    //        2
+    //    }
 
     //    async fn consume(mut source: mpsc::UnboundedReceiver<String>, objects: Deque) {
     //        while let Some(object) = source.next().await {
