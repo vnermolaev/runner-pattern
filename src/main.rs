@@ -2,7 +2,6 @@ use failure::_core::hash::Hasher;
 use futures::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::time;
@@ -40,13 +39,12 @@ impl BlackholeRunner {
     }
 
     async fn routine(&mut self) -> Result<(), failure::Error> {
+        let start = time::Instant::now() + time::Duration::from_secs(2);
+        let mut interval = time::interval_at(start, time::Duration::from_secs(2));
         loop {
-            let delay = time::delay_for(Duration::from_secs(2));
-
             futures::select! {
-                tick = delay.fuse() => {
+                tick = interval.tick().fuse() => {
                     if let Some(object) = self.objects.pop_front() {
-                        println!("Popping {:?}", object);
                         let _ = self.emitter.send(object);
                     } else {
                         break;
@@ -63,51 +61,6 @@ impl BlackholeRunner {
 
         Ok(())
     }
-
-    //    async fn consume(&self) -> u32 {
-    //        time::delay_for(Duration::from_secs(1)).await;
-    //        1
-    //    }
-    //
-    //    async fn emit(&self) -> u32 {
-    //        time::delay_for(Duration::from_secs(2)).await;
-    //        2
-    //    }
-
-    //    async fn consume(&mut self) -> u32 {
-    //        //        time::delay_for(Duration::from_secs(1)).await;
-    //        //        1
-    //        let v = self.source.next().await;
-    //        1
-    //    }
-    //
-    //    async fn emit(&self) -> u32 {
-    //        time::delay_for(Duration::from_secs(2)).await;
-    //        2
-    //    }
-
-    //    async fn consume(mut source: mpsc::UnboundedReceiver<String>, objects: Deque) {
-    //        while let Some(object) = source.next().await {
-    //            println!("Consumed {}", object);
-    //            objects.lock().await.push_back(object);
-    //        }
-    //    }
-    //
-    //    async fn emit(
-    //        emitter: mpsc::UnboundedSender<String>,
-    //        objects: Deque,
-    //    ) -> Result<(), failure::Error> {
-    //        loop {
-    //            time::delay_for(Duration::from_secs(2)).await;
-    //            if let Some(object) = objects.lock().await.pop_front() {
-    //                let _ = emitter.send(object);
-    //            } else {
-    //                break;
-    //            }
-    //        }
-    //
-    //        Ok(())
-    //    }
 }
 
 #[tokio::main]
@@ -119,7 +72,7 @@ async fn main() -> Result<(), failure::Error> {
 
     tokio::spawn(async move {
         for i in 0..10u8 {
-            time::delay_for(Duration::from_secs(1)).await;
+            time::delay_for(time::Duration::from_secs(1)).await;
             let _ = tx.send(format!("Body {}", i));
         }
     });
